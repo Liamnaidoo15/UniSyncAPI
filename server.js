@@ -53,11 +53,44 @@ try {
     console.log(`📁 Using Firebase service account from file: ${serviceAccountPath}`);
   }
   
+  // Validate service account structure
+  if (!serviceAccount.project_id || !serviceAccount.private_key || !serviceAccount.client_email) {
+    throw new Error('Invalid service account: missing required fields (project_id, private_key, or client_email)');
+  }
+  
+  console.log(`📋 Service account project: ${serviceAccount.project_id}`);
+  console.log(`📧 Service account email: ${serviceAccount.client_email}`);
+  
   admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount)
+    credential: admin.credential.cert(serviceAccount),
+    projectId: serviceAccount.project_id
   });
   db = admin.firestore();
-  console.log('✅ Firebase Admin initialized successfully');
+  
+  // Test Firestore connection (async, non-blocking)
+  console.log('🔍 Testing Firestore connection...');
+  db.collection('_test_connection').limit(1).get()
+    .then(() => {
+      console.log('✅ Firebase Admin initialized and Firestore connection verified');
+    })
+    .catch((testError) => {
+      console.error('❌ Firestore connection test failed:', testError.message);
+      console.error('Error code:', testError.code);
+      if (testError.code === 16) {
+        console.error('⚠️  UNAUTHENTICATED error - Service account may not have proper permissions');
+        console.error('⚠️  Check that:');
+        console.error('   1. Service account is enabled in Google Cloud Console');
+        console.error('   2. Service account has "Firebase Admin SDK Administrator Service Agent" role');
+        console.error('   3. Firestore is enabled in Firebase Console');
+        console.error('   4. Service account key is not expired or revoked');
+        console.error('   5. Go to: https://console.cloud.google.com/iam-admin/serviceaccounts');
+        console.error(`   6. Find service account: ${serviceAccount.client_email}`);
+        console.error('   7. Ensure it has proper Firebase/Firestore permissions');
+      }
+      console.log('⚠️  Continuing despite connection test failure - operations may fail');
+    });
+  
+  console.log('✅ Firebase Admin initialized (connection test running in background)');
 } catch (error) {
   console.error('❌ Error initializing Firebase Admin:', error.message);
   console.error('Error stack:', error.stack);
