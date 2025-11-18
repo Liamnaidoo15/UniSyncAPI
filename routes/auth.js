@@ -14,6 +14,12 @@ router.post('/register', async (req, res) => {
   try {
     const db = req.app.get('db');
     
+    // Check if db is available
+    if (!db) {
+      console.error('Database not available');
+      return res.status(500).json(errorResponse('Database connection not available'));
+    }
+    
     // Extract fields from request (supports RegisterRequest format)
     const { email, name, role, password, studentId, lecturerId, coordinatorId } = req.body;
 
@@ -43,6 +49,10 @@ router.post('/register', async (req, res) => {
 
     // Hash password
     console.log('Hashing password...');
+    if (!password || password.length < 6) {
+      console.log('Registration failed: Password too short');
+      return res.status(400).json(errorResponse('Password must be at least 6 characters'));
+    }
     const hashedPassword = await bcrypt.hash(password, 10);
     console.log('Password hashed successfully');
 
@@ -84,9 +94,16 @@ router.post('/register', async (req, res) => {
     );
 
     console.log(`Registration successful for user: ${email}`);
+    // Return just the user (matching ApiResponse<User> format expected by Android app)
     res.status(201).json(successResponse(user, 'User registered successfully'));
   } catch (error) {
     console.error('Registration error:', error);
+    console.error('Error stack:', error.stack);
+    console.error('Error details:', {
+      message: error.message,
+      name: error.name,
+      code: error.code
+    });
     res.status(500).json(errorResponse('Failed to register user', error.message));
   }
 });
@@ -122,15 +139,52 @@ router.post('/login', async (req, res) => {
     const userDoc = userQuery.docs[0];
     const user = { id: userDoc.id, ...userDoc.data() };
 
-    // Check password
+    // Check password - handle users without passwords (created before password requirement)
     if (!user.password) {
       console.log(`Login failed: No password stored for user: ${email}`);
-      return res.status(401).json(errorResponse('Invalid email or password'));
+      console.log(`User data keys: ${Object.keys(user).join(', ')}`);
+      // For users created before password requirement, we can't authenticate them
+      // They need to reset their password or register again
+      return res.status(401).json(errorResponse('No password set for this account. Please use "Forgot Password" or contact support to set a password.'));
     }
 
-    console.log(`Checking password for user: ${email}, has password: ${!!user.password}`);
-    const isValidPassword = await bcrypt.compare(password, user.password);
-    console.log(`Password comparison result: ${isValidPassword}`);
+    console.log(`Checking password for user: ${email}, has password: ${!!user.password}, password length: ${user.password.length}`);
+    
+    // Check if password is bcrypt hashed (starts with $2a$, $2b$, or $2y$)
+    const isBcryptHash = user.password.startsWith('$2a$') || 
+                         user.password.startsWith('$2b$') || 
+                         user.password.startsWith('$2y$');
+    
+    let isValidPassword = false;
+    
+    if (isBcryptHash) {
+      // Password is bcrypt hashed, compare normally
+      console.log(`Password is bcrypt hashed, comparing...`);
+      isValidPassword = await bcrypt.compare(password, user.password);
+      console.log(`Bcrypt password comparison result: ${isValidPassword}`);
+    } else {
+      // Password might be stored in plain text (for backward compatibility with old accounts)
+      // This is less secure but allows migration of old accounts
+      console.log(`Warning: Password appears to be stored in plain text for user: ${email}`);
+      console.log(`This is insecure. User should reset password.`);
+      isValidPassword = (password === user.password);
+      console.log(`Plain text password comparison result: ${isValidPassword}`);
+      
+      // If login succeeds with plain text, hash and update the password
+      if (isValidPassword) {
+        console.log(`Migrating plain text password to bcrypt for user: ${email}`);
+        try {
+          const hashedPassword = await bcrypt.hash(password, 10);
+          await db.collection('users').doc(user.id).update({
+            password: hashedPassword
+          });
+          console.log(`Password migrated to bcrypt for user: ${email}`);
+        } catch (migrationError) {
+          console.error(`Failed to migrate password for user: ${email}`, migrationError);
+          // Continue with login even if migration fails
+        }
+      }
+    }
     
     if (!isValidPassword) {
       console.log(`Login failed: Invalid password for user: ${email}`);
