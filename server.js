@@ -26,8 +26,26 @@ try {
     try {
       serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
       console.log('📁 Using Firebase service account from environment variable');
+      
+      // Fix private key newlines - Render might store \\n instead of \n
+      if (serviceAccount.private_key) {
+        // Replace double backslashes with single (Render environment variable escaping)
+        if (serviceAccount.private_key.includes('\\n')) {
+          console.log('🔧 Fixing private key newlines (converting \\\\n to \\n)');
+          serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n');
+        }
+        
+        // Validate that private key has proper newlines
+        if (!serviceAccount.private_key.includes('\n')) {
+          console.warn('⚠️  Warning: Private key may not have proper newline characters');
+          console.warn('⚠️  Make sure the JSON in FIREBASE_SERVICE_ACCOUNT has \\n for newlines in private_key');
+        } else {
+          console.log('✅ Private key format looks correct');
+        }
+      }
     } catch (parseError) {
       console.error('❌ Error parsing FIREBASE_SERVICE_ACCOUNT environment variable:', parseError.message);
+      console.error('❌ Make sure the JSON is valid and on a single line');
       throw new Error('Invalid FIREBASE_SERVICE_ACCOUNT JSON');
     }
   } else {
