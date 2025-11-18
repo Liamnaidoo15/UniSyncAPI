@@ -98,10 +98,20 @@ app.set('db', db);
 
 // Health check endpoint
 app.get('/health', (req, res) => {
+  const db = app.get('db');
+  const hasDb = !!db;
+  const hasJwtSecret = !!process.env.JWT_SECRET;
+  const hasFirebaseConfig = !!process.env.FIREBASE_SERVICE_ACCOUNT;
+  
   res.json({ 
     success: true, 
     message: 'UniSync API is running',
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    configuration: {
+      database: hasDb ? 'connected' : 'not connected',
+      jwtSecret: hasJwtSecret ? 'configured' : 'not configured',
+      firebaseConfig: hasFirebaseConfig ? 'from environment' : 'from file'
+    }
   });
 });
 
@@ -141,6 +151,9 @@ app.listen(PORT, () => {
   console.log(`🚀 UniSync API server running on port ${PORT}`);
   console.log(`📍 API Base URL: http://localhost:${PORT}/api`);
   console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`🔐 JWT_SECRET: ${process.env.JWT_SECRET ? '✅ Configured' : '❌ NOT SET'}`);
+  console.log(`🔥 Firebase: ${db ? '✅ Connected' : '❌ NOT CONNECTED'}`);
+  console.log(`📁 Firebase Config: ${process.env.FIREBASE_SERVICE_ACCOUNT ? 'From Environment' : 'From File'}`);
 });
 
 module.exports = app;

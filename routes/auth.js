@@ -12,13 +12,27 @@ const { successResponse, errorResponse } = require('../utils/response');
  */
 router.post('/register', async (req, res) => {
   try {
+    console.log('=== Registration Request Received ===');
+    console.log('Request body keys:', Object.keys(req.body));
+    console.log('Request body:', JSON.stringify(req.body, null, 2));
+    
     const db = req.app.get('db');
     
     // Check if db is available
     if (!db) {
-      console.error('Database not available');
-      return res.status(500).json(errorResponse('Database connection not available'));
+      console.error('❌ Database not available - Firebase Admin may not be initialized');
+      return res.status(500).json(errorResponse('Database connection not available. Please check server configuration.'));
     }
+    
+    console.log('✅ Database connection available');
+    
+    // Check JWT_SECRET
+    if (!process.env.JWT_SECRET) {
+      console.error('❌ JWT_SECRET is not set');
+      return res.status(500).json(errorResponse('Server configuration error: JWT_SECRET not set'));
+    }
+    
+    console.log('✅ JWT_SECRET is configured');
     
     // Extract fields from request (supports RegisterRequest format)
     const { email, name, role, password, studentId, lecturerId, coordinatorId } = req.body;
@@ -37,14 +51,21 @@ router.post('/register', async (req, res) => {
     }
 
     // Check if user already exists
-    const existingUser = await db.collection('users')
-      .where('email', '==', email)
-      .limit(1)
-      .get();
+    console.log('Checking if user already exists...');
+    try {
+      const existingUser = await db.collection('users')
+        .where('email', '==', email)
+        .limit(1)
+        .get();
 
-    if (!existingUser.empty) {
-      console.log(`Registration failed: User already exists for email: ${email}`);
-      return res.status(400).json(errorResponse('User with this email already exists'));
+      if (!existingUser.empty) {
+        console.log(`Registration failed: User already exists for email: ${email}`);
+        return res.status(400).json(errorResponse('User with this email already exists'));
+      }
+      console.log('✅ User does not exist, proceeding with registration');
+    } catch (queryError) {
+      console.error('❌ Error checking existing user:', queryError);
+      throw new Error(`Failed to check existing user: ${queryError.message}`);
     }
 
     // Hash password
@@ -75,8 +96,15 @@ router.post('/register', async (req, res) => {
 
     // Save to Firestore
     console.log(`Saving user to Firestore: ${userId}`);
-    await db.collection('users').doc(userId).set(user);
-    console.log(`User saved successfully to Firestore: ${userId}`);
+    try {
+      await db.collection('users').doc(userId).set(user);
+      console.log(`✅ User saved successfully to Firestore: ${userId}`);
+    } catch (firestoreError) {
+      console.error('❌ Error saving user to Firestore:', firestoreError);
+      console.error('Firestore error code:', firestoreError.code);
+      console.error('Firestore error message:', firestoreError.message);
+      throw new Error(`Failed to save user to Firestore: ${firestoreError.message}`);
+    }
 
     // Verify the user was saved with password
     const savedUserDoc = await db.collection('users').doc(userId).get();
@@ -87,24 +115,41 @@ router.post('/register', async (req, res) => {
     delete user.password;
 
     // Generate JWT token
-    const token = jwt.sign(
-      { userId: user.id, email: user.email, role: user.role },
-      process.env.JWT_SECRET,
-      { expiresIn: '7d' }
-    );
+    console.log('Generating JWT token...');
+    let token;
+    try {
+      token = jwt.sign(
+        { userId: user.id, email: user.email, role: user.role },
+        process.env.JWT_SECRET,
+        { expiresIn: '7d' }
+      );
+      console.log('✅ JWT token generated successfully');
+    } catch (jwtError) {
+      console.error('❌ Error generating JWT token:', jwtError);
+      throw new Error(`Failed to generate authentication token: ${jwtError.message}`);
+    }
 
-    console.log(`Registration successful for user: ${email}`);
+    console.log(`✅ Registration successful for user: ${email}`);
     // Return just the user (matching ApiResponse<User> format expected by Android app)
     res.status(201).json(successResponse(user, 'User registered successfully'));
   } catch (error) {
-    console.error('Registration error:', error);
+    console.error('❌ ========== REGISTRATION ERROR ==========');
+    console.error('Error message:', error.message);
+    console.error('Error name:', error.name);
+    console.error('Error code:', error.code);
     console.error('Error stack:', error.stack);
-    console.error('Error details:', {
-      message: error.message,
-      name: error.name,
-      code: error.code
-    });
-    res.status(500).json(errorResponse('Failed to register user', error.message));
+    console.error('Full error object:', JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
+    console.error('===========================================');
+    
+    // Provide more helpful error messages
+    let errorMessage = error.message || 'Failed to register user';
+    if (error.message && error.message.includes('Firebase')) {
+      errorMessage = 'Database connection error. Please check server configuration.';
+    } else if (error.message && error.message.includes('JWT')) {
+      errorMessage = 'Authentication service error. Please check server configuration.';
+    }
+    
+    res.status(500).json(errorResponse(errorMessage, 'Failed to register user'));
   }
 });
 
